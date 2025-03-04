@@ -29,27 +29,41 @@ if font_path.exists():
 else:
     st.warning("未找到 simhei.ttf 字体文件，中文可能无法正确显示！")
 
+
 # 绘制雷达图的函数
-def plot_radar_chart(scores):
+def plot_radar_chart(scores, title="", color='blue'):
     labels = list(scores.keys())
     values = list(scores.values())
     angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
     values += values[:1]
     angles += angles[:1]
 
-    fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
-    ax.fill(angles, values, color='blue', alpha=0.25)
-    ax.plot(angles, values, color='blue', linewidth=2)
-    ax.set_yticklabels([])
+    fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))  # 调整为较小尺寸以适应三列
+    ax.fill(angles, values, color=color, alpha=0.25)  # 使用传入的颜色填充
+    ax.plot(angles, values, color=color, linewidth=2)  # 使用传入的颜色绘制线条
+
+    # 在雷达图上标注分数，移到图内
+    for i, (angle, value) in enumerate(zip(angles[:-1], values[:-1])):
+        # 计算向内的偏移位置，value - 10 表示往内移动10个单位
+        inner_value = max(value - 10, 0)  # 确保不会移到负值区域
+        ax.text(angle, inner_value, f'{int(value)}',
+                ha='center', va='center',
+                fontsize=10,  # 增大字体
+                fontweight='bold',  # 加粗
+                color='black',
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.7, pad=1))  # 添加白色背景框
+
+    ax.set_yticklabels([])  # 隐藏径向刻度标签
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels, fontsize=12)
+    ax.set_xticklabels(labels, fontsize=10)  # 调整字体大小适应小图
+    ax.set_title(title, fontsize=12, pad=10)  # 添加标题
     return fig
 
 # 大模型分析函数
 def analyze_with_llm(prompt, expect_json=False):
     try:
         response = client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-V2.5",
+            model="Qwen/Qwen2.5-72B-Instruct",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant designed to provide structured output when requested."},
                 {"role": "user", "content": prompt}
@@ -148,6 +162,7 @@ def find_hot_cases():
             if "analysis_results" in st.session_state:
                 del st.session_state.analysis_results
             st.success(f"已选择案例：{df.iloc[selected_index]['title']}")
+            st.info("请点击侧边栏的「🔬 拆爆款」进入下一步分析")
 
     with tab2:
         st.info("数据抓取功能开发中...")
@@ -194,14 +209,17 @@ def analyze_case():
     st.subheader("爆款归因报告")
 
     if "analysis_results" not in st.session_state:
-        with st.spinner("正在分析，请稍候..."):
+        with st.spinner("正在分析，请稍候...请耐心等待30秒左右"):
             prompt1 = f"""
-            你是一个爆款内容分析专家。请根据以下信息分析该内容的爆款潜力，并为以下五个维度打分（0-100分）：
-            - 标题吸引力：标题是否抓眼球、引发好奇或冲突。
-            - 内容深度与关联性：内容是否有趣、是否关联大众关心的热点。
-            - 情感共鸣：是否引发共情、愤怒、好奇等情绪。
-            - 平台适配度：内容是否契合平台的用户习惯和传播特性。
-            - 叙事结构：是否采用吸引人的叙事方式（如案例教学、倒叙、冲突递进等）。
+            你是一个爆款内容分析专家。请根据以下信息分析该内容的爆款潜力，并为以下8个维度打分（0-100分）：
+            - 主题匹配：内容主题与平台的适配度
+            - 主要表达：视频的核心观点
+            - 样态呈现：纪录片、知识分享、Vlog或是哪种样态，有没有特色或吸引力
+            - 叙事角度：切入点、关联点
+            - 叙事结构：是否采用吸引人的叙事方式（如案例教学、倒叙、冲突递进等）
+            - 标题：关键词密度、情感强度、信息明确度、悬念/冲突设计 等
+            - 内容要素：信息密度、梗密度、反转等
+            - 情绪触发：共情、争议、爽感等点有多少，哪个位置
 
             输入信息：
             - 平台：{case['platform']}
@@ -212,11 +230,14 @@ def analyze_case():
 
             输出格式：{{
                 "radar_scores": {{
-                    "标题吸引力": score,
-                    "内容深度与关联性": score,
-                    "情感共鸣": score,
-                    "平台适配度": score,
-                    "叙事结构": score
+                    "主题匹配": score,
+                    "主要表达": score,
+                    "样态呈现": score,
+                    "叙事角度": score,
+                    "叙事结构": score,
+                    "标题": score,
+                    "内容要素": score,
+                    "情感触发": score
                 }}
             }}
             只返回得分，不需要解释。
@@ -227,12 +248,15 @@ def analyze_case():
             radar_scores = radar_result["radar_scores"]
 
             prompt2 = f"""
-            你是一个爆款内容分析专家。基于以下雷达图得分，选取得分最高的前三个维度，分析其具体爆款原因。每次分析需结合输入信息，围绕以下角度展开：
-            - 标题吸引力：是否制造悬念、冲突或使用热门关键词。
-            - 内容深度与关联性：是否关联热点事件、是否有深度或独特视角。
-            - 情感共鸣：是否触发特定情绪（如共情、惊讶、愤怒），如何实现的。
-            - 平台适配度：是否契合平台用户偏好（如短平快或深度长文）。
-            - 叙事结构：是否使用特别的叙事技巧（如案例教学、倒叙、递进冲突）。
+            你是一个爆款内容分析专家。基于以下雷达图得分，选取得分最高的前3个维度，分析其具体爆款原因。每次分析需结合输入信息，围绕以下角度展开：
+            - 主题匹配：内容主题与平台的适配度
+            - 主要表达：视频的核心观点
+            - 样态呈现：纪录片、知识分享、Vlog或是哪种样态，有没有特色或吸引力
+            - 叙事角度：切入点、关联点
+            - 叙事结构：是否采用吸引人的叙事方式（如案例教学、倒叙、冲突递进等）
+            - 标题：关键词密度、情感强度、信息明确度、悬念/冲突设计 等
+            - 内容要素：信息密度、梗密度、反转等
+            - 情绪触发：共情、争议、爽感等点有多少，哪个位置
 
             输入信息：
             - 平台：{case['platform']}
@@ -244,11 +268,11 @@ def analyze_case():
 
             输出格式：
             1. [维度名称]（得分：XX）
-               分析原因（150-200字）
+               分析原因，直接输出原因（150-200字）
             2. [维度名称]（得分：XX）
-               分析原因（150-200字）
+               分析原因，直接输出原因（150-200字）
             3. [维度名称]（得分：XX）
-               分析原因（150-200字）
+               分析原因，直接输出原因（150-200字）
             """
             detailed_analysis = analyze_with_llm(prompt2, expect_json=False)
             if detailed_analysis is None:
@@ -262,9 +286,9 @@ def analyze_case():
               {detailed_analysis}
 
             输出格式：
-            1. 亮点描述（50-80字）
-            2. 亮点描述（50-80字）
-            3. 亮点描述（50-80字）
+            1. 亮点描述，直接输出分析结果（50-80字）
+            2. 亮点描述，直接输出分析结果（50-80字）
+            3. 亮点描述，直接输出分析结果（50-80字）
             """
             highlights = analyze_with_llm(prompt3, expect_json=False)
             if highlights is None:
@@ -278,21 +302,51 @@ def analyze_case():
 
     analysis = st.session_state.analysis_results
 
+    # 分三列展示雷达图
     st.write("### 爆款因素得分")
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        fig = plot_radar_chart(analysis["radar_scores"])
-        st.pyplot(fig, use_container_width=True)
-    with col2:
-        st.write("**维度得分：**")
-        for dimension, score in analysis["radar_scores"].items():
-            st.write(f"- {dimension}: {score}")
+    col1, col2, col3 = st.columns(3)  # 三列布局
 
+    # 宏观层面：主题匹配、主要表达
+    macro_scores = {
+        "主题匹配": analysis["radar_scores"]["主题匹配"],
+        "主要表达": analysis["radar_scores"]["主要表达"]
+    }
+    with col1:
+        st.write("**宏观层面**")
+        fig_macro = plot_radar_chart(macro_scores, title="宏观层面得分", color='blue')  # 蓝色
+        st.pyplot(fig_macro, use_container_width=True)
+
+    # 中观层面：样态呈现、叙事角度、叙事结构
+    meso_scores = {
+        "样态呈现": analysis["radar_scores"]["样态呈现"],
+        "叙事角度": analysis["radar_scores"]["叙事角度"],
+        "叙事结构": analysis["radar_scores"]["叙事结构"]
+    }
+    with col2:
+        st.write("**中观层面**")
+        fig_meso = plot_radar_chart(meso_scores, title="中观层面得分", color='green')  # 绿色
+        st.pyplot(fig_meso, use_container_width=True)
+
+    # 微观层面：标题、内容要素、情绪触发
+    micro_scores = {
+        "标题": analysis["radar_scores"]["标题"],
+        "内容要素": analysis["radar_scores"]["内容要素"],
+        "情感触发": analysis["radar_scores"]["情感触发"]
+    }
+    with col3:
+        st.write("**微观层面**")
+        fig_micro = plot_radar_chart(micro_scores, title="微观层面得分", color='red')  # 红色
+        st.pyplot(fig_micro, use_container_width=True)
+
+    # 展示详细拆解和高分维度
     st.write("### 高分维度拆解")
     st.markdown(analysis["detailed_analysis"])
 
     st.write("### 亮点概括")
     st.markdown(analysis["highlights"])
+
+    st.success("分析完成！")
+    st.info("请点击侧边栏的「✍️ 造爆款」生成文章")
 
 def generate_article():
     st.header("✍️ 爆款应用车间")
